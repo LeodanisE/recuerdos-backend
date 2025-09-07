@@ -1,25 +1,42 @@
 // app/api/paypal/_lib.ts
-export const runtime = 'nodejs';
+import { NextResponse } from "next/server";
 
-export const PAYPAL_BASE =
-  process.env.PAYPAL_BASE?.trim() || 'https://api-m.paypal.com'; // LIVE por defecto
+export const runtime = "nodejs";
 
-export async function getAccessToken() {
-  const cid = process.env.PAYPAL_CLIENT_ID;
-  const secret = process.env.PAYPAL_CLIENT_SECRET;
-  if (!cid || !secret) throw new Error('Missing PayPal credentials');
+function reqEnv(name: string) {
+  const v = process.env[name];
+  if (!v || !v.trim()) {
+    throw new Error(`Missing env ${name}`);
+  }
+  return v.trim();
+}
 
-  const res = await fetch(`${PAYPAL_BASE}/v1/oauth2/token`, {
-    method: 'POST',
-    headers: {
-      Authorization: 'Basic ' + Buffer.from(`${cid}:${secret}`).toString('base64'),
-      'Content-Type': 'application/x-www-form-urlencoded',
-    },
-    body: 'grant_type=client_credentials',
-    cache: 'no-store',
-  });
+export const PP = {
+  base: reqEnv("PAYPAL_API_BASE"), // p.ej. https://api-m.sandbox.paypal.com
+  id: reqEnv("PAYPAL_CLIENT_ID"),
+  secret: reqEnv("PAYPAL_CLIENT_SECRET"),
+};
 
-  if (!res.ok) throw new Error(`Token error ${res.status}: ${await res.text()}`);
-  const data = await res.json();
-  return data.access_token as string;
+export async function ppFetch<T = any>(
+  path: string,
+  init?: RequestInit
+): Promise<{ ok: boolean; status: number; data: T }> {
+  const url = `${PP.base}${path}`;
+  const res = await fetch(url, init);
+  const data = (await res.json().catch(() => ({}))) as T;
+  return { ok: res.ok, status: res.status, data };
+}
+
+export function basicAuthHeader() {
+  const token = Buffer.from(`${PP.id}:${PP.secret}`).toString("base64");
+  return `Basic ${token}`;
+}
+
+// Pequeño helper para respuestas de error con detalle
+export function jsonError(detail: any, status = 400) {
+  console.error("PAYPAL API ERROR", status, detail);
+  return NextResponse.json(
+    { ok: false, error: "PAYPAL_ERROR", detail },
+    { status }
+  );
 }

@@ -1,52 +1,78 @@
 // app/api/paypal/create/route.ts
-import { NextResponse } from 'next/server';
-import { getAccessToken, PAYPAL_BASE } from '../_lib';
+import { NextRequest, NextResponse } from "next/server";
+import { PP, ppFetch, basicAuthHeader, jsonError } from "../_lib";
 
-export const runtime = 'nodejs';
+export const runtime = "nodejs";
 
-// Map de planes de pago (el servidor define precios reales)
-const PLANS = {
-  month1:   { amount: '1.00', currency: 'USD', reference: 'month1_30d' },
-  tenYears: { amount: '5.00', currency: 'USD', reference: 'tenYears_10y' },
-  forever:  { amount: '9.00', currency: 'USD', reference: 'forever_lifetime' },
-} as const;
+// Los planes que cobraremos con PayPal (no incluir el gratis)
+const PLANS: Record<
+  string,
+  { value: string; currency: "USD"; description: string }
+> = {
+  "p1-30d": { value: "1.00", currency: "USD", description: "Access 30 days" },
+  "p5-10y": { value: "5.00", currency: "USD", description: "Access ~10 years" },
+  "p9-life": { value: "9.00", currency: "USD", description: "Lifetime access" },
+};
 
-export async function POST(req: Request) {
+export async function POST(req: NextRequest) {
   try {
-    const { planId } = await req.json().catch(() => ({}));
-    if (!planId || !(planId in PLANS)) {
-      return NextResponse.json({ ok: false, error: 'Invalid planId' }, { status: 400 });
-    }
-    const cfg = PLANS[planId as keyof typeof PLANS];
-    const token = await getAccessToken();
+    const { planId } = (await req.json().catch(() => ({}))) as {
+      planId?: string;
+    };
 
-    const r = await fetch(`${PAYPAL_BASE}/v2/checkout/orders`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        intent: 'CAPTURE',
-        purchase_units: [
-          {
-            reference_id: cfg.reference,
-            amount: { value: cfg.amount, currency_code: cfg.currency },
+    if (!planId) {
+      return jsonError({ msg: "planId required" }, 400);
+    }
+    if (planId === "free-24h") {
+      // No se crea pedido PayPal para gratis
+      return jsonError({ msg: "FREE_PLAN" }, 400);
+    }
+
+    const plan = PLANS[planId];
+    if (!plan) {
+      return jsonError({ msg: "Unknown planId", planId }, 400);
+    }
+
+    // Crea el pedido en PayPal
+    const body = {
+      intent: "CAPTURE",
+      purchase_units: [
+        {
+          amount: {
+            currency_code: plan.currency,
+            value: plan.value,
           },
-        ],
-        application_context: {
-          shipping_preference: 'NO_SHIPPING',
-          user_action: 'PAY_NOW',
+          description: plan.description,
         },
-      }),
-      cache: 'no-store',
+      ],
+      application_context: {
+        brand_name: "Recuerdos",
+        shipping_preference: "NO_SHIPPING",
+        user_action: "PAY_NOW",
+      },
+    };
+
+    const { ok, status, data } = await ppFetch<{
+      id?: string;
+      name?: string;
+      message?: string;
+      details?: any[];
+    }>("/v2/checkout/orders", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: basicAuthHeader(),
+      },
+      body: JSON.stringify(body),
+      // opcional: next: { revalidate: 0 }
     });
 
-    const data = await r.json();
-    if (!r.ok) return NextResponse.json({ ok: false, error: data }, { status: 400 });
+    if (!ok || !data?.id) {
+      return jsonError({ msg: "CREATE_ORDER_FAILED", status, data }, 400);
+    }
 
-    return NextResponse.json({ ok: true, orderID: data.id });
-  } catch (e: any) {
-    return NextResponse.json({ ok: false, error: e?.message || 'CreateError' }, { status: 500 });
+    return NextResponse.json({ ok: true, id: data.id });
+  } catch (err: any) {
+    return jsonError({ msg: err?.message || "UnexpectedError" }, 500);
   }
 }
