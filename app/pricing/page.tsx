@@ -1,69 +1,90 @@
 // app/pricing/page.tsx
 'use client';
-import React from 'react';
-import { PayPalScriptProvider, PayPalButtons } from '@paypal/react-paypal-js';
+import * as React from 'react';
 
 export const dynamic = 'force-dynamic';
 
-const initialOptions = {
-  'client-id': process.env.NEXT_PUBLIC_PAYPAL_CLIENT_ID || '',
-  currency: 'USD',
-  intent: 'capture',
-};
-
-type Duration =
-  | { kind: 'hours'; value: number }
-  | { kind: 'days'; value: number }
-  | { kind: 'years'; value: number }
-  | { kind: 'forever' };
+type PlanId = 'free24' | 'month1' | 'tenYears' | 'forever';
 
 type Plan = {
-  id: 'free24' | 'month1' | 'tenYears' | 'forever';
+  id: PlanId;
   title: string;
   desc: string;
   price: number; // USD
-  duration: Duration;
 };
 
 const PLANS: Plan[] = [
-  {
-    id: 'free24',
-    title: 'Gratis 24h',
-    desc: 'Una sola carga. El enlace/QR caduca en 24 horas.',
-    price: 0,
-    duration: { kind: 'hours', value: 24 },
-  },
-  {
-    id: 'month1',
-    title: '$1 por 30 días',
-    desc: 'Acceso durante 30 días. Sin suscripción.',
-    price: 1,
-    duration: { kind: 'days', value: 30 },
-  },
-  {
-    id: 'tenYears',
-    title: '$5 por 10 años',
-    desc: 'Acceso por 10 años (≈3650 días).',
-    price: 5,
-    duration: { kind: 'years', value: 10 },
-  },
-  {
-    id: 'forever',
-    title: '$9 para siempre',
-    desc: 'Compra única. Enlace permanente.',
-    price: 9,
-    duration: { kind: 'forever' },
-  },
+  { id: 'free24',  title: 'Free 24h',         desc: 'One upload. Link/QR expires in 24 hours.', price: 0 },
+  { id: 'month1',  title: '$1 for 30 days',   desc: 'Access for 30 days. No subscription.',     price: 1 },
+  { id: 'tenYears',title: '$5 for 10 years',  desc: 'Access for 10 years (~3650 days).',        price: 5 },
+  { id: 'forever', title: '$9 lifetime',      desc: 'One-time purchase. Permanent link.',       price: 9 },
 ];
+
+const CLIENT_ID = process.env.NEXT_PUBLIC_PAYPAL_CLIENT_ID || '';
 
 export default function PricingPage() {
   const [selected, setSelected] = React.useState<Plan>(PLANS[0]);
+  const btnRef = React.useRef<HTMLDivElement>(null);
+  const [sdkReady, setSdkReady] = React.useState(false);
+
+  // Cargar SDK de PayPal una sola vez (sin paquetes externos)
+  React.useEffect(() => {
+    if (!CLIENT_ID) return;
+    if (document.getElementById('paypal-sdk')) { setSdkReady(true); return; }
+    const s = document.createElement('script');
+    s.id = 'paypal-sdk';
+    s.src = `https://www.paypal.com/sdk/js?client-id=${encodeURIComponent(CLIENT_ID)}&intent=capture&currency=USD&components=buttons`;
+    s.onload = () => setSdkReady(true);
+    document.body.appendChild(s);
+  }, []);
+
+  // Pintar botón solo para planes de pago
+  React.useEffect(() => {
+    if (selected.price === 0) return; // gratis → no PayPal
+    // @ts-ignore
+    const paypal = (window as any).paypal;
+    if (!sdkReady || !paypal || !btnRef.current) return;
+
+    btnRef.current.innerHTML = ''; // limpiar al cambiar plan
+    paypal.Buttons({
+      style: { layout: 'vertical', color: 'gold', shape: 'rect', label: 'paypal' },
+
+      // Crear orden en el servidor (el servidor decide el precio real)
+      createOrder: async () => {
+        const r = await fetch('/api/paypal/create', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ planId: selected.id }),
+        });
+        const j = await r.json();
+        if (!j.ok) throw new Error(j.error || 'create failed');
+        return j.orderID;
+      },
+
+      // Capturar/verificar en servidor y redirigir
+      onApprove: async (data: any) => {
+        const r = await fetch('/api/paypal/verify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ orderID: data.orderID }),
+        });
+        const j = await r.json();
+        if (!j.ok) return alert('Payment failed: ' + (j.error || 'Unknown'));
+        window.location.href = '/thanks?order=' + encodeURIComponent(j.orderID);
+      },
+
+      onError: (err: any) => {
+        console.error(err);
+        alert('PayPal error');
+      },
+    }).render(btnRef.current);
+  }, [sdkReady, selected]);
 
   return (
     <div style={{ maxWidth: 980, margin: '40px auto', padding: 16, fontFamily: 'system-ui' }}>
-      <h1 style={{ marginBottom: 16 }}>Precios</h1>
+      <h1 style={{ marginBottom: 16 }}>Plans</h1>
       <p style={{ marginBottom: 24 }}>
-        Paga una vez. Recibe un código QR que te redirige a tu archivo. Sin suscripción.
+        Pay once. Get a QR that redirects to your file. No subscription.
       </p>
 
       {/* Selector de planes */}
@@ -87,71 +108,37 @@ export default function PricingPage() {
         ))}
       </div>
 
-      {/* Pago / uso de plan */}
-      <div style={{ marginTop: 24 }}>
-        <PayPalScriptProvider options={initialOptions}>
-          <div style={{ border: '1px solid #eee', borderRadius: 8, padding: 16 }}>
-            {selected.price === 0 ? (
-              <>
-                <p style={{ marginBottom: 8 }}>
-                  Este plan es <b>gratis</b>. Te crearemos un enlace/QR que caduca en 24 horas.
-                </p>
-                <a
-                  href="/upload-qr"
-                  style={{
-                    display: 'inline-block',
-                    background: '#111',
-                    color: '#fff',
-                    padding: '10px 16px',
-                    borderRadius: 6,
-                    textDecoration: 'none',
-                  }}
-                >
-                  Usar plan gratis 24h
-                </a>
-              </>
-            ) : (
-              <>
-                <p style={{ marginBottom: 16 }}>
-                  Pagar <b>${selected.price.toFixed(2)}</b> (USD).
-                </p>
-                <PayPalButtons
-                  style={{ layout: 'vertical' }}
-                  createOrder={async () => {
-                    const res = await fetch('/api/paypal/create-order', {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({
-                        planId: selected.id,
-                        amount: selected.price,
-                        currency: 'USD',
-                        // Envia duración al backend para registrar la expiración:
-                        duration: selected.duration,
-                      }),
-                    });
-                    const data = await res.json();
-                    if (!res.ok || !data.id) throw new Error(data.error || 'No se pudo crear la orden');
-                    return data.id;
-                  }}
-                  onApprove={async (data) => {
-                    const res = await fetch('/api/paypal/capture-order', {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ orderId: data.orderID }),
-                    });
-                    const out = await res.json();
-                    if (!res.ok) {
-                      alert('Error al capturar pago: ' + (out.error || ''));
-                      return;
-                    }
-                    // Después de capturar, redirige a “gracias”.
-                    window.location.href = '/thanks';
-                  }}
-                />
-              </>
+      {/* Acción según plan */}
+      <div style={{ marginTop: 24, border: '1px solid #eee', borderRadius: 8, padding: 16 }}>
+        {selected.price === 0 ? (
+          <>
+            <p style={{ marginBottom: 8 }}>
+              This plan is <b>free</b>. We’ll create a link/QR that expires in 24 hours.
+            </p>
+            <a
+              href="/upload-qr?trial=24h"
+              style={{
+                display: 'inline-block',
+                background: '#111',
+                color: '#fff',
+                padding: '10px 16px',
+                borderRadius: 6,
+                textDecoration: 'none',
+              }}
+            >
+              Use free 24h plan
+            </a>
+          </>
+        ) : (
+          <>
+            {!CLIENT_ID && (
+              <p style={{ color: 'tomato', marginBottom: 8 }}>
+                Missing <code>NEXT_PUBLIC_PAYPAL_CLIENT_ID</code>.
+              </p>
             )}
-          </div>
-        </PayPalScriptProvider>
+            <div ref={btnRef} />
+          </>
+        )}
       </div>
     </div>
   );
