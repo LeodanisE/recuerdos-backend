@@ -1,15 +1,26 @@
 // app/api/paypal/create/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { PP, getAccessToken, ppFetch, jsonError } from "../_lib";
+import { getAccessToken, ppFetch, jsonError } from "../_lib";
 
 export const runtime = "nodejs";
 
 type Body = { planId?: string };
 
+// Aceptamos ambos formatos de IDs:
+// - Los nuevos: "30d-1", "10y-5", "forever-9"
+// - Los que ya envía tu frontend: "p-30d", "p-10y", "p-forever"
 const PLAN_MAP: Record<string, { amount: string; description: string }> = {
+  // 30 días
   "30d-1": { amount: "1.00", description: "Access for 30 days" },
+  "p-30d": { amount: "1.00", description: "Access for 30 days" },
+
+  // ~10 años
   "10y-5": { amount: "5.00", description: "Access for ~10 years (~3650 days)" },
+  "p-10y": { amount: "5.00", description: "Access for ~10 years (~3650 days)" },
+
+  // De por vida
   "forever-9": { amount: "9.00", description: "One-time purchase. Permanent link." },
+  "p-forever": { amount: "9.00", description: "One-time purchase. Permanent link." },
 };
 
 export async function POST(req: NextRequest) {
@@ -34,7 +45,7 @@ export async function POST(req: NextRequest) {
     // Token de PayPal
     const token = await getAccessToken();
 
-    // Crear orden
+    // Crear orden en PayPal
     const res = await ppFetch("/v2/checkout/orders", {
       method: "POST",
       bearer: token,
@@ -56,7 +67,6 @@ export async function POST(req: NextRequest) {
 
     const data = await res.json();
     const orderId = data?.id as string | undefined;
-
     if (!orderId) {
       return jsonError(500, "PayPal response without id", data);
     }
