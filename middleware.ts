@@ -1,54 +1,68 @@
-// middleware.ts
+﻿// /middleware.ts
 import { NextRequest, NextResponse } from "next/server";
 
+/**
+ * Solo protegemos PÁGINAS privadas (/upload, /my-codes)
+ * y APIs de subida/firmado/email/links.
+ * /upload-qr NO está en el matcher → queda pública.
+ */
 export const config = {
   matcher: [
+    // páginas privadas
+    "/upload",
     "/upload/:path*",
-    "/upload-qr/:path*",
+    "/my-codes",
     "/my-codes/:path*",
-    "/__version",
-    "/api/__version",
-    "/version",
+
+    // APIs que requieren pago
+    "/api/multipart/:path*",
+    "/api/sign",
+    "/api/email",
+    "/api/links/:path*",
   ],
 };
 
-export function middleware(req: NextRequest) {
-  const path = req.nextUrl.pathname;
-
-  // permitir libremente las rutas de verificación
-  if (path === "/__version" || path === "/api/__version" || path === "/version") {
-    const r = NextResponse.next();
-    r.headers.set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
-    r.headers.set("Pragma", "no-cache");
-    r.headers.set("Expires", "0");
-    return r;
-  }
-
-  // tu regla original (solo producción)
-  const isProd = process.env.NODE_ENV === "production";
-  if (isProd) {
-    const user = req.cookies.get("vx_user")?.value || "";
-    const order = req.cookies.get("vx_order")?.value || "";
-    const needsAuth =
-      path.startsWith("/upload") ||
-      path.startsWith("/upload-qr") ||
-      path.startsWith("/my-codes");
-
-    if (needsAuth && !(user || order)) {
-      const url = req.nextUrl.clone();
-      url.pathname = "/pricing";
-      url.searchParams.set("need", "valid");
-      const res = NextResponse.redirect(url);
-      res.headers.set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
-      res.headers.set("Pragma", "no-cache");
-      res.headers.set("Expires", "0");
-      return res;
-    }
-  }
-
-  const res = NextResponse.next();
+function noStore(res: NextResponse) {
   res.headers.set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
   res.headers.set("Pragma", "no-cache");
   res.headers.set("Expires", "0");
+  res.headers.set("x-mid", "paywall"); // debug
   return res;
+}
+
+export function middleware(req: NextRequest) {
+  // En desarrollo no bloqueamos
+  if (process.env.NODE_ENV !== "production") return noStore(NextResponse.next());
+
+  const path = req.nextUrl.pathname;
+  const hasAccess =
+    Boolean(req.cookies.get("vx_user")?.value) || Boolean(req.cookies.get("vx_order")?.value);
+
+  // Páginas privadas
+  const isProtectedPage =
+    path === "/upload" ||
+    path.startsWith("/upload/") ||
+    path === "/my-codes" ||
+    path.startsWith("/my-codes/");
+  if (isProtectedPage && !hasAccess) {
+    const url = req.nextUrl.clone();
+    url.pathname = "/pricing";
+    url.searchParams.set("need", "valid");
+    return noStore(NextResponse.redirect(url));
+  }
+
+  // APIs protegidas
+  const isProtectedApi =
+    path.startsWith("/api/multipart/") ||
+    path === "/api/sign" ||
+    path === "/api/email" ||
+    path.startsWith("/api/links/");
+  if (isProtectedApi && !hasAccess) {
+    return new NextResponse(JSON.stringify({ ok: false, error: "NEED_PAYMENT" }), {
+      status: 402,
+      headers: { "content-type": "application/json", "Cache-Control": "no-store", "x-mid": "paywall" },
+    });
+  }
+
+  return noStore(NextResponse.next());
 }
