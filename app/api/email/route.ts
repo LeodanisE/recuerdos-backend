@@ -17,7 +17,9 @@ export async function POST(req: NextRequest) {
       cache: "no-store",
     });
     const signData = await signRes.json().catch(() => null);
-    if (!signRes.ok || !signData?.ok || !signData?.url) return err(500, "No se pudo firmar la URL.");
+    if (!signRes.ok || !signData?.ok || !signData?.url) {
+      return err(500, "No se pudo firmar la URL.");
+    }
 
     const signedUrl: string = signData.url;
     const origin = process.env.NEXT_PUBLIC_SITE_URL || new URL(req.url).origin;
@@ -36,7 +38,7 @@ export async function POST(req: NextRequest) {
       </div>
     `;
 
-    // Enviar SOLO con Resend (evitamos nodemailer para que compile sin deps)
+    // SOLO Resend para evitar dependencia de nodemailer
     if (!process.env.RESEND_API_KEY) {
       return err(501, "Email no configurado: falta RESEND_API_KEY.");
     }
