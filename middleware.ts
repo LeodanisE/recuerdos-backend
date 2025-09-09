@@ -2,9 +2,8 @@
 import { NextRequest, NextResponse } from "next/server";
 
 /**
- * Solo protegemos PÁGINAS privadas (/upload, /my-codes)
- * y APIs de subida/firmado/email/links.
- * /upload-qr NO está en el matcher → queda pública.
+ * Solo protegemos /upload, /my-codes y APIs de subida/firmado/email/links.
+ * /upload-qr NO está en el matcher → queda PÚBLICA.
  */
 export const config = {
   matcher: [
@@ -31,14 +30,13 @@ function noStore(res: NextResponse) {
 }
 
 export function middleware(req: NextRequest) {
-  // En desarrollo no bloqueamos
   if (process.env.NODE_ENV !== "production") return noStore(NextResponse.next());
 
   const path = req.nextUrl.pathname;
   const hasAccess =
     Boolean(req.cookies.get("vx_user")?.value) || Boolean(req.cookies.get("vx_order")?.value);
 
-  // Páginas privadas
+  // páginas protegidas
   const isProtectedPage =
     path === "/upload" ||
     path.startsWith("/upload/") ||
