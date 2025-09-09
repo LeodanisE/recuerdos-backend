@@ -30,7 +30,6 @@ function setNoStore(res: NextResponse) {
 }
 
 export function middleware(req: NextRequest) {
-  // En dev no aplicamos paywall (solo deshabilitamos caché)
   if (process.env.NODE_ENV !== "production") {
     return setNoStore(NextResponse.next());
   }
@@ -74,6 +73,5 @@ export function middleware(req: NextRequest) {
     });
   }
 
-  // Paso normal
   return setNoStore(NextResponse.next());
 }

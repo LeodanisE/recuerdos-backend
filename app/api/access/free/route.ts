@@ -1,7 +1,8 @@
+// app/api/access/free/route.ts
 import { NextRequest, NextResponse } from "next/server";
 export const runtime = "nodejs";
 
-export async function POST(req: NextRequest) {
+export async function POST(_req: NextRequest) {
   try {
     const maxAge = 24 * 60 * 60; // 24h
     const res = NextResponse.json({

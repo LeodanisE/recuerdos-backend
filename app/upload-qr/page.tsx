@@ -6,7 +6,7 @@ import { QRCodeCanvas } from "qrcode.react";
 type Msg = { text: React.ReactNode; type: "success" | "error" | "" };
 
 export const dynamic = "force-dynamic";
-const VERSION = "upload-qr v4.7";
+const VERSION = "upload-qr v4.8";
 
 export default function UploadQRPage() {
   const [msg, setMsg] = React.useState<Msg>({ text: "", type: "" });
@@ -27,13 +27,14 @@ export default function UploadQRPage() {
     (process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/+$/, "") || "") ||
     (typeof window !== "undefined" ? window.location.origin : "http://localhost:3000");
 
-  // 1) Limpia cualquier query ?plan=... SIN recargar (no se pierde el file)
+  // Limpia ?plan=... sin recargar (no se pierde el archivo)
   React.useEffect(() => {
-    if (typeof window === "undefined") return;
-    const u = new URL(window.location.href);
-    if (u.searchParams.has("plan")) {
-      u.searchParams.delete("plan");
-      window.history.replaceState({}, "", u.pathname + (u.search ? "?" + u.search : ""));
+    if (typeof window !== "undefined") {
+      const u = new URL(window.location.href);
+      if (u.searchParams.has("plan")) {
+        u.searchParams.delete("plan");
+        window.history.replaceState({}, "", u.pathname + (u.search ? "?" + u.search : ""));
+      }
     }
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
   }, []);
@@ -107,7 +108,9 @@ export default function UploadQRPage() {
     try {
       // INIT
       let res = await fetch(`/api/multipart/init?` + new URLSearchParams({
-        filename: file.name, contentType: file.type || "application/octet-stream", parts: "1",
+        filename: file.name,
+        contentType: file.type || "application/octet-stream",
+        parts: "1",
       }).toString(), { cache: "no-store" });
       if (res.status === 402) { setNeedsAccess(true); return setMsg({ text: <Paywall />, type: "error" }); }
       let data = await res.json().catch(() => null);
@@ -119,8 +122,10 @@ export default function UploadQRPage() {
       if (!putUrl || !objectKey || !uploadId) return setMsg({ text: "INIT incompleto.", type: "error" });
 
       // PUT
-      res = await fetch(`/api/multipart/put?url=${encodeURIComponent(putUrl)}&size=${file.size}&type=${encodeURIComponent(file.type || "application/octet-stream")}`,
-        { method: "POST", body: file, cache: "no-store" });
+      res = await fetch(
+        `/api/multipart/put?url=${encodeURIComponent(putUrl)}&size=${file.size}&type=${encodeURIComponent(file.type || "application/octet-stream")}`,
+        { method: "POST", body: file, cache: "no-store" },
+      );
       if (res.status === 402) { setNeedsAccess(true); return setMsg({ text: <Paywall />, type: "error" }); }
       const putJson = await res.json().catch(() => null);
       if (!res.ok || !putJson?.ok) {
@@ -132,8 +137,10 @@ export default function UploadQRPage() {
 
       // COMPLETE
       res = await fetch(`/api/multipart/complete`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ uploadId, key: objectKey, parts: [{ ETag, PartNumber: 1 }] }), cache: "no-store",
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ uploadId, key: objectKey, parts: [{ ETag, PartNumber: 1 }] }),
+        cache: "no-store",
       });
       if (res.status === 402) { setNeedsAccess(true); return setMsg({ text: <Paywall />, type: "error" }); }
       data = await res.json().catch(() => null);
@@ -174,7 +181,11 @@ export default function UploadQRPage() {
       if (!key) return setEmailMsg({ text: "No hay archivo subido todavía.", type: "err" });
       if (!email) return setEmailMsg({ text: "Ingresa un correo válido.", type: "err" });
       setSending(true); setEmailMsg({ text: "", type: "" });
-      const r = await fetch("/api/email", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ to: email, key }) });
+      const r = await fetch("/api/email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ to: email, key }),
+      });
       if (r.status === 402) { setNeedsAccess(true); setEmailMsg({ text: "Necesitas acceso para enviar por email.", type: "err" }); return; }
       const j = await r.json().catch(() => ({} as any));
       if (!r.ok || !j?.ok) setEmailMsg({ text: j?.error || "No se pudo enviar el correo.", type: "err" });

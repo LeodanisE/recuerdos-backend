@@ -6,11 +6,8 @@ export default function PricingPage() {
   async function activateFree() {
     const r = await fetch("/api/access/free", { method: "POST" });
     const j = await r.json().catch(() => null);
-    if (r.ok && j?.ok) {
-      window.location.assign("/upload-qr");
-    } else {
-      alert(j?.error || "No se pudo activar el plan gratis.");
-    }
+    if (r.ok && j?.ok) window.location.assign("/upload-qr");
+    else alert(j?.error || "No se pudo activar el plan gratis.");
   }
 
   return (
@@ -30,7 +27,7 @@ export default function PricingPage() {
         <div style={{ border: "1px solid #ddd", borderRadius: 8, padding: 12 }}>
           <div style={{ fontWeight: 700 }}>$1 por 30 días</div>
           <div style={{ color: "#555", marginTop: 4 }}>Acceso por 30 días. Sin suscripción.</div>
-          <a href="#" onClick={(e)=>{e.preventDefault(); alert("Configura PayPal sandbox primero.");}}
+          <a href="/#" onClick={(e)=>{e.preventDefault(); alert("Configura PayPal sandbox primero.");}}
              style={{ display:"inline-block", marginTop: 12, padding:"8px 12px", border:"1px solid #111", borderRadius:6, textDecoration:"none" }}>
             Pagar con PayPal (sandbox)
           </a>
