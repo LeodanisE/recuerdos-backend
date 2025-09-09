@@ -38,7 +38,7 @@ export async function POST(req: NextRequest) {
       </div>
     `;
 
-    // SOLO Resend para evitar dependencia de nodemailer
+    // Sólo Resend (así compila sin nodemailer)
     if (!process.env.RESEND_API_KEY) {
       return err(501, "Email no configurado: falta RESEND_API_KEY.");
     }
