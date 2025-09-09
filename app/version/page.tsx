@@ -1,16 +1,28 @@
-// app/version/page.tsx
-export const dynamic = "force-dynamic";
+﻿export const dynamic = "force-dynamic";
 
-export default function VersionPage() {
+export default async function VersionPage() {
+  const res = await fetch("/api/version", { cache: "no-store" }).catch(() => null);
+  const payload =
+    (res && (await res.json().catch(() => null))) || {
+      ok: false,
+      error: "no response",
+    };
+
   return (
     <main style={{ padding: 24, fontFamily: "system-ui" }}>
-      <h1>Version Check</h1>
-      <p style={{ marginTop: 8, color: "#555" }}>
-        build: <strong>upload-qr v4.0</strong>
-      </p>
-      <p style={{ marginTop: 8, color: "#777" }}>
-        {new Date().toISOString()}
-      </p>
+      <h1>/version</h1>
+      <pre
+        style={{
+          marginTop: 12,
+          background: "#0b1020",
+          color: "#e6ecff",
+          padding: 12,
+          borderRadius: 8,
+          overflowX: "auto",
+        }}
+      >
+        {JSON.stringify(payload, null, 2)}
+      </pre>
     </main>
   );
 }
