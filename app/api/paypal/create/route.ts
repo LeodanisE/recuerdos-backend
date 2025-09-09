@@ -1,86 +1,45 @@
-// app/api/paypal/create/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { getAccessToken, ppFetch, jsonError } from "../_lib";
+const PAYPAL_BASE = process.env.PAYPAL_API_BASE || "https://api-m.sandbox.paypal.com";
+const CLIENT_ID = process.env.PAYPAL_CLIENT_ID!;
+const CLIENT_SECRET = process.env.PAYPAL_CLIENT_SECRET!;
 
-export const runtime = "nodejs";
-
-type Body = { planId?: string };
-
-// Precios válidos (fuente de la verdad)
-const KNOWN: Record<string, { amount: string; description: string }> = {
-  // 30 días – $1
-  "30d-1": { amount: "1.00", description: "Access for 30 days" },
-  "p-30d": { amount: "1.00", description: "Access for 30 days" },
-  "p1-30d": { amount: "1.00", description: "Access for 30 days" },
-
-  // ~10 años – $5
-  "10y-5": { amount: "5.00", description: "Access for ~10 years (~3650 days)" },
-  "p-10y": { amount: "5.00", description: "Access for ~10 years (~3650 days)" },
-  "p5-10y": { amount: "5.00", description: "Access for ~10 years (~3650 days)" },
-
-  // De por vida – $9
-  "forever-9": { amount: "9.00", description: "One-time purchase. Permanent link." },
-  "p-forever": { amount: "9.00", description: "One-time purchase. Permanent link." },
-  "p9-forever": { amount: "9.00", description: "One-time purchase. Permanent link." },
-};
-
-// Extra: intenta normalizar ids tipo "p{precio}-{term}" o "{precio}-{term}"
-function planFromPattern(id: string) {
-  const m = /^p?(\d+)-(30d|10y|forever)$/i.exec(id);
-  if (!m) return undefined;
-  const [, price, term] = m;
-  if (term === "30d" && price === "1") return KNOWN["30d-1"];
-  if (term === "10y" && price === "5") return KNOWN["10y-5"];
-  if (term === "forever" && price === "9") return KNOWN["forever-9"];
-  return undefined;
+async function token() {
+  const auth = Buffer.from(`${CLIENT_ID}:${CLIENT_SECRET}`).toString("base64");
+  const r = await fetch(`${PAYPAL_BASE}/v1/oauth2/token`, {
+    method: "POST",
+    headers: { Authorization: `Basic ${auth}`, "Content-Type": "application/x-www-form-urlencoded" },
+    body: "grant_type=client_credentials",
+    cache: "no-store",
+  });
+  if (!r.ok) throw new Error(`oauth ${r.status}`);
+  const j = await r.json(); return j.access_token as string;
 }
 
 export async function POST(req: NextRequest) {
   try {
-    const body = (await req.json()) as Body;
-    const planId = body?.planId?.trim();
-
-    if (!planId) return jsonError(400, "planId required");
-    if (planId === "free-24h") {
-      // Plan gratis: no se crea orden en PayPal
-      return NextResponse.json({ ok: true, free: true });
-    }
-
-    const plan =
-      KNOWN[planId] ??
-      planFromPattern(planId);
-
-    if (!plan) return jsonError(400, `Unknown planId: ${planId}`);
-
-    // 1) OAuth
-    const token = await getAccessToken();
-
-    // 2) Crear orden en PayPal
-    const res = await ppFetch("/v2/checkout/orders", {
-      method: "POST",
-      bearer: token,
-      json: {
-        intent: "CAPTURE",
-        purchase_units: [
-          {
-            amount: { currency_code: "USD", value: plan.amount },
-            description: plan.description,
-          },
-        ],
+    const tk = await token();
+    const origin = process.env.NEXT_PUBLIC_SITE_URL || new URL(req.url).origin;
+    const body = {
+      intent: "CAPTURE",
+      purchase_units: [{ reference_id: "default", amount: { currency_code: "USD", value: "1.00" } }],
+      application_context: {
+        brand_name: "SaveInQR",
+        user_action: "PAY_NOW",
+        shipping_preference: "NO_SHIPPING",
+        return_url: `${origin}/api/paypal/capture`,
+        cancel_url: `${origin}/pricing?cancel=1`,
       },
+    };
+    const r = await fetch(`${PAYPAL_BASE}/v2/checkout/orders`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${tk}`, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      cache: "no-store",
     });
-
-    if (!res.ok) {
-      const txt = await res.text();
-      return jsonError(res.status, "Create order failed", txt);
-    }
-
-    const data = await res.json();
-    const orderId = data?.id as string | undefined;
-    if (!orderId) return jsonError(500, "PayPal response without id", data);
-
-    return NextResponse.json({ ok: true, id: orderId });
-  } catch (err: any) {
-    return jsonError(500, err?.message || "create failed", err);
+    const j = await r.json();
+    if (!r.ok) return NextResponse.json({ ok: false, error: "Create order failed", detail: JSON.stringify(j) }, { status: 500 });
+    return NextResponse.json({ ok: true, id: j.id });
+  } catch (e: any) {
+    return NextResponse.json({ ok: false, error: e?.message || "paypal create failed" }, { status: 500 });
   }
 }

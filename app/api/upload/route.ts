@@ -1,100 +1,158 @@
-// app/api/upload/route.ts
-import { NextResponse } from "next/server";
-import { Upload } from "@aws-sdk/lib-storage";
-import { s3 } from "@/lib/b2";
-import { fileTypeFromBuffer } from "file-type";
+import { NextRequest, NextResponse } from "next/server";
 
 export const runtime = "nodejs";
-export const maxDuration = 60;
 
-// Tipos permitidos (firma real, no solo extensión)
-const ALLOW_MIME = new Set([
-  "image/jpeg", "image/png", "image/webp",
-  "audio/mpeg", "audio/mp4", "audio/aac", "audio/wav",
-  "video/mp4", "video/quicktime",
+/** ---------- Ajustes (puedes dejar valores por defecto) ---------- */
+const DEFAULT_MAX_BYTES = 50 * 1024 * 1024; // 50 MB por defecto
+const ALLOWED_TYPES = [
+  // imágenes
+  "image/png",
+  "image/jpeg",
+  "image/webp",
+  "image/gif",
+  "image/svg+xml",
+  // docs comunes
   "application/pdf",
-]);
+  "text/plain",
+  "application/zip",
+  "application/x-zip-compressed",
+  // audio/video ligeros (ajusta a tu negocio)
+  "audio/mpeg",
+  "audio/mp4",
+  "video/mp4",
+];
 
-// Límite de tamaño (ajústalo si quieres)
-const MAX_BYTES = 50 * 1024 * 1024; // 50 MB
+function jsonErr(status: number, message: string) {
+  return NextResponse.json({ ok: false, error: message }, { status });
+}
 
-export async function POST(req: Request) {
+function trimQuotes(s: string) {
+  return s?.replace?.(/^"+|"+$/g, "") || s;
+}
+
+/** Limpia el nombre de archivo para que sea una key válida */
+function normalizeName(name: string) {
+  return (name || "file").replace(/[^A-Za-z0-9._-]+/g, "_").slice(0, 120);
+}
+
+export async function POST(req: NextRequest) {
   try {
     const form = await req.formData();
-
-    // Debe venir marcado el checkbox "tos" del formulario
-    if (!form.get("tos")) {
-      return NextResponse.json(
-        { ok: false, msg: "Debes aceptar las normas de uso." },
-        { status: 400 }
-      );
-    }
-
     const file = form.get("file") as File | null;
-    if (!file) {
-      return NextResponse.json(
-        { ok: false, msg: "No llegó 'file'" },
-        { status: 400 }
-      );
+    const tos = form.get("tos");
+
+    if (!file) return jsonErr(400, "No file");
+    if (!tos) return jsonErr(400, "Terms not accepted");
+
+    // Validación de tamaño por entorno (opcional)
+    const envMax = Number(process.env.UPLOAD_MAX_BYTES || process.env.NEXT_PUBLIC_UPLOAD_MAX_BYTES || "") || DEFAULT_MAX_BYTES;
+    if (typeof file.size === "number" && file.size > envMax) {
+      return jsonErr(413, `Archivo demasiado grande. Límite: ${Math.round(envMax / (1024 * 1024))} MB`);
     }
 
-    if (file.size > MAX_BYTES) {
-      return NextResponse.json(
-        { ok: false, msg: `Archivo muy grande (máx ${MAX_BYTES / 1024 / 1024} MB)` },
-        { status: 400 }
-      );
+    // Validación de tipo (opcional; comenta si quieres permitir cualquier cosa)
+    const contentType = file.type || "application/octet-stream";
+    if (ALLOWED_TYPES.length && contentType && !ALLOWED_TYPES.includes(contentType)) {
+      return jsonErr(415, `Tipo de archivo no permitido: ${contentType}`);
     }
 
-    const ab = await file.arrayBuffer();
-    const buf = Buffer.from(ab); // también podrías usar new Uint8Array(ab)
+    // Origin del propio proyecto (misma instancia)
+    const origin = req.nextUrl.origin.replace(/\/+$/, "");
 
-    // Detecta tipo real por firma binaria
-    const ft = await fileTypeFromBuffer(buf);
-    const mime = ft?.mime || file.type || "application/octet-stream";
-    if (!ALLOW_MIME.has(mime)) {
-      return NextResponse.json(
-        { ok: false, msg: `Tipo no permitido (${mime})` },
-        { status: 400 }
-      );
+    // Nombre y key
+    const cleanName = normalizeName(file.name);
+    const key = `uploads/${Date.now()}-${cleanName}`;
+
+    /** 1) INIT (1 parte) */
+    const initURL = new URL("/api/multipart/init", origin);
+    initURL.searchParams.set("filename", key);
+    initURL.searchParams.set("contentType", contentType);
+    initURL.searchParams.set("parts", "1");
+
+    const initRes = await fetch(initURL.toString(), { cache: "no-store" });
+    const initData = await initRes.json().catch(() => ({} as any));
+
+    if (
+      !initRes.ok ||
+      !initData?.uploadId ||
+      !(initData?.urls?.[0]?.url || initData?.url) ||
+      !initData?.bucket ||
+      !initData?.key
+    ) {
+      return jsonErr(500, initData?.error || initData?.detail || "init failed");
     }
 
-    const bucket = (process.env.B2_BUCKET_NAME || "").trim();
-    const key = `${Date.now()}-${(file.name || "file").replace(/\s+/g, "_")}`;
+    const putUrl: string = initData.urls?.[0]?.url || initData.url;
 
-    // (Opcional) logs útiles para depurar
-    // console.log("bucket:", bucket);
-    // console.log("endpoint:", process.env.B2_ENDPOINT_URL);
-    // console.log("file.size:", file.size, "buf.length:", buf.length, "mime:", mime);
+    /** 2) PUT (subir binario a URL firmada a través del proxy) */
+    // Nuestro proxy acepta opcionalmente size/type para setear headers
+    const putProxy = new URL("/api/multipart/put", origin);
+    putProxy.searchParams.set("url", putUrl);
+    if (typeof file.size === "number") putProxy.searchParams.set("size", String(file.size));
+    if (contentType) putProxy.searchParams.set("type", contentType);
 
-    const uploader = new Upload({
-      client: s3,
-      params: {
-        Bucket: bucket,
-        Key: key,
-        Body: buf,
-        ContentType: mime,
-      },
-      queueSize: 1,
-      partSize: 8 * 1024 * 1024,
-      leavePartsOnError: false,
+    const putRes = await fetch(putProxy.toString(), {
+      method: "POST",
+      body: file, // File es Blob -> streaming en Node 18+
+      cache: "no-store",
     });
 
-    await uploader.done();
+    // Intentar ETag desde JSON o headers
+    let etag =
+      putRes.headers.get("etag") ||
+      putRes.headers.get("ETag") ||
+      "";
+
+    try {
+      // Algunos proxies devuelven JSON con { etag / ETag }
+      const pj = await putRes.clone().json();
+      etag = pj?.etag || pj?.ETag || etag;
+    } catch {
+      // si no es JSON, ignoramos
+    }
+
+    etag = trimQuotes(etag);
+
+    if (!putRes.ok || !etag) {
+      // Intentar leer snippet del body para diagnosticar
+      let bodySnippet = "";
+      try {
+        const txt = await putRes.clone().text();
+        bodySnippet = txt?.slice?.(0, 200) || "";
+      } catch {}
+      return jsonErr(
+        500,
+        `upload part failed (status ${putRes.status})${bodySnippet ? ` — ${bodySnippet}` : ""}`,
+      );
+    }
+
+    /** 3) COMPLETE */
+    const completeURL = new URL("/api/multipart/complete", origin);
+    const completeRes = await fetch(completeURL.toString(), {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
+      body: JSON.stringify({
+        uploadId: initData.uploadId,
+        bucket: initData.bucket,
+        key: initData.key,
+        parts: [{ ETag: etag, PartNumber: 1 }],
+      }),
+      cache: "no-store",
+    });
+
+    const completeData = await completeRes.json().catch(() => ({} as any));
+    if (!completeRes.ok || completeData?.ok === false) {
+      return jsonErr(500, completeData?.error || completeData?.detail || "complete failed");
+    }
 
     return NextResponse.json({
       ok: true,
-      key,
-      msg: `Archivo ${file.name} subido 🚀`,
+      key: initData.key, // p.ej. uploads/1234-nombre.jpg
+      contentType,
+      size: file.size ?? null,
+      msg: "Archivo subido ✅",
     });
-  } catch (err: any) {
-    console.error("UPLOAD ERROR:", err);
-    return NextResponse.json(
-      {
-        ok: false,
-        error: err?.Code || err?.name || "UploadError",
-        detail: err?.message,
-      },
-      { status: 500 }
-    );
+  } catch (e: any) {
+    return jsonErr(500, e?.message || "upload failed");
   }
 }

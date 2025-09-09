@@ -1,4 +1,4 @@
-// lib/paypal.ts (o lib/b2.ts)
+// lib/paypal.ts
 export async function getPaypalToken(): Promise<string> {
   const cid  = process.env.PAYPAL_CLIENT_ID?.trim();
   const csec = process.env.PAYPAL_CLIENT_SECRET?.trim();
@@ -29,6 +29,6 @@ export async function getPaypalToken(): Promise<string> {
     throw new Error(`PayPal token error ${res.status}: ${body}`);
   }
 
-  const data = await res.json() as { access_token: string };
+  const data = (await res.json()) as { access_token: string };
   return data.access_token;
 }
