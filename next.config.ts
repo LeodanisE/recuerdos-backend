@@ -1,8 +1,18 @@
+// next.config.ts
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
+
+  // ⚠️ SIN redirects/rewrites. Si los tenías, quedan anulados aquí.
+  async redirects() {
+    return []; // NO REDIRECTS
+  },
+  async rewrites() {
+    return []; // NO REWRITES
+  },
+
   async headers() {
     const noStore = [
       { key: "Cache-Control", value: "no-store, no-cache, must-revalidate, max-age=0" },
@@ -12,13 +22,7 @@ const nextConfig: NextConfig = {
     return [
       { source: "/upload-qr", headers: noStore },
       { source: "/upload-qr/:path*", headers: noStore },
-      { source: "/upload", headers: noStore },
-      { source: "/upload/:path*", headers: noStore },
-      { source: "/my-codes", headers: noStore },
-      { source: "/my-codes/:path*", headers: noStore },
-      { source: "/__version", headers: noStore },
-      { source: "/version", headers: noStore },
-      { source: "/api/__version", headers: [{ key: "Cache-Control", value: "no-store" }] },
+      { source: "/pub", headers: noStore },
       { source: "/api/:path*", headers: [{ key: "Cache-Control", value: "no-store" }] },
     ];
   },
