@@ -3,55 +3,47 @@ import { NextRequest, NextResponse } from "next/server";
 
 export const runtime = "nodejs";
 
-// Uso:
-// /api/debug/grant?email=leopruebaslocas%40gmail.com&order=88H98898AG2442728&plan=30d&ttl=600
-export async function GET(req: NextRequest) {
-  const { searchParams } = new URL(req.url);
-  const email = (searchParams.get("email") || "").trim().toLowerCase();
-  const order = (searchParams.get("order") || "").trim();
-  const plan = (searchParams.get("plan") || "30d").trim().toLowerCase();
-  const ttl = Number(searchParams.get("ttl") || 600); // 10 min default
+function j(status: number, body: any) {
+  return NextResponse.json(body, { status });
+}
 
-  if (!email && !order) {
-    return NextResponse.json({ ok: false, error: "email or order required" }, { status: 400 });
+const UP_URL = process.env.UPSTASH_REDIS_REST_URL || "";
+const UP_TKN = process.env.UPSTASH_REDIS_REST_TOKEN || "";
+
+type UpstashResp = { result?: string; success?: boolean; error?: string };
+
+async function upstashSetEx(key: string, ttl: number, value: string): Promise<boolean> {
+  if (!UP_URL || !UP_TKN) return false;
+  const url = `${UP_URL.replace(/\/+$/, "")}/setex/${encodeURIComponent(key)}/${ttl}/${encodeURIComponent(value)}`;
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${UP_TKN}` },
+    cache: "no-store",
+  });
+  const data: UpstashResp | null = await res.json().catch(() => null);
+  return res.ok && (data?.result === "OK" || data?.success === true);
+}
+
+export async function POST(req: NextRequest) {
+  try {
+    const { email, order, ttl } = await req.json().catch(() => ({} as any));
+    if (!email && !order) {
+      return j(400, { ok: false, error: "Falta 'email' o 'order'." });
+    }
+    const ttlNum = Number.isFinite(+ttl) && +ttl > 0 ? Math.floor(+ttl) : 24 * 60 * 60;
+    const payload = "1";
+
+    let wroteEmail: boolean = false;
+    let wroteOrder: boolean = false;
+
+    if (email) {
+      wroteEmail = await upstashSetEx(`entitlement:${String(email)}`, ttlNum, payload);
+    }
+    if (order) {
+      wroteOrder = await upstashSetEx(`entitlement:order:${String(order)}`, ttlNum, payload);
+    }
+
+    return j(200, { ok: true, wroteEmail, wroteOrder, ttl: ttlNum });
+  } catch (e: any) {
+    return j(500, { ok: false, error: e?.message || "grant failed" });
   }
-
-  const RURL = (process.env.UPSTASH_REDIS_REST_URL || "").replace(/\/$/, "");
-  const RTOK = process.env.UPSTASH_REDIS_REST_TOKEN || "";
-  if (!RURL || !RTOK) {
-    return NextResponse.json({ ok: false, error: "redis not configured" }, { status: 500 });
-  }
-
-  const payload = encodeURIComponent(
-    JSON.stringify({
-      ok: true,
-      plan,
-      orderId: order || null,
-      payerEmail: email || null,
-      grantedBy: "/api/debug/grant",
-      at: new Date().toISOString(),
-    })
-  );
-
-  async function upstash(path: string) {
-    const r = await fetch(`${RURL}${path}`, {
-      headers: { Authorization: `Bearer ${RTOK}` },
-      cache: "no-store",
-    }).catch(() => null);
-    return r?.ok;
-  }
-
-  let wrote_email: boolean | null = null;
-  let wrote_order: boolean | null = null;
-
-  if (email) {
-    const ek = encodeURIComponent(`entitlement:${email}`);
-    wrote_email = await upstash(`/setex/${ek}/${ttl}/${payload}`);
-  }
-  if (order) {
-    const ok = await upstash(`/setex/${encodeURIComponent(`entitlement:order:${order}`)}/${ttl}/${payload}`);
-    wrote_order = !!ok;
-  }
-
-  return NextResponse.json({ ok: true, ttl, wrote_email, wrote_order });
 }
