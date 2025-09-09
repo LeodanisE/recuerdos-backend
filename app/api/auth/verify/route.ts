@@ -1,35 +1,21 @@
-// /app/api/auth/verify/route.ts
+// app/api/auth/verify/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { kvGetJSON, kvSetJSON, kvDel } from "@/lib/kv";
 
-export async function POST(req: NextRequest) {
-  try {
-    const { email, code } = (await req.json()) as { email?: string; code?: string };
-    const e = email?.trim().toLowerCase();
-    const c = (code || "").trim();
-    if (!e || !c) return NextResponse.json({ ok: false, error: "Faltan campos" }, { status: 400 });
+export const runtime = "nodejs";
 
-    const rec = await kvGetJSON<{ code: string; attempts: number }>(`login:${e}`);
-    if (!rec) return NextResponse.json({ ok: false, error: "Código expirado" }, { status: 400 });
+/**
+ * Stub seguro para build: no usa env ni importa SDKs.
+ * Implementa aquí tu verificación real más adelante.
+ */
 
-    if (rec.code !== c) {
-      const attempts = (rec.attempts || 0) + 1;
-      await kvSetJSON(`login:${e}`, { code: rec.code, attempts }, 600);
-      return NextResponse.json({ ok: false, error: "Código incorrecto" }, { status: 400 });
-    }
+function resp(status: number, body: any) {
+  return NextResponse.json(body, { status, headers: { "Cache-Control": "no-store" } });
+}
 
-    await kvDel(`login:${e}`);
+export async function GET(_req: NextRequest) {
+  return resp(501, { ok: false, error: "Auth verify not implemented" });
+}
 
-    const res = NextResponse.json({ ok: true });
-    res.cookies.set("vx_user", e, {
-      httpOnly: true,
-      sameSite: "lax",
-      secure: false, // ponlo true en prod bajo HTTPS
-      path: "/",
-      maxAge: 60 * 60 * 24 * 30, // 30 días
-    });
-    return res;
-  } catch (err: any) {
-    return NextResponse.json({ ok: false, error: err?.message || "error" }, { status: 500 });
-  }
+export async function POST(_req: NextRequest) {
+  return resp(501, { ok: false, error: "Auth verify not implemented" });
 }
