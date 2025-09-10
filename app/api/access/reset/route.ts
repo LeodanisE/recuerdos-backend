@@ -4,7 +4,7 @@ import { NextRequest, NextResponse } from "next/server";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-function clearCookie(res: NextResponse, name: string, domain?: string, path: string = "/") {
+function clearCookie(res: NextResponse, name: string, domain?: string, path = "/") {
   res.cookies.set(name, "", {
     httpOnly: true,
     sameSite: "lax",
@@ -21,13 +21,14 @@ export async function GET(req: NextRequest) {
   const host = url.hostname.replace(/:\d+$/, "");
   const apex = host.replace(/^www\./, "");
 
+  // IMPORTANTE: mantener los backticks (`) en estas dos líneas
   const domains = Array.from(
     new Set<string | undefined>([
       undefined,
       host,
       apex,
-      .,
-      www.,
+      `.${apex}`,
+      `www.${apex}`,
     ]),
   );
 
