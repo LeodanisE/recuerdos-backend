@@ -12,14 +12,17 @@ export async function POST(req: NextRequest) {
     const { to, key } = await req.json();
     if (!to || !key) return err(400, "Faltan 'to' o 'key'.");
 
-    // Firmar URL del archivo
-    const signRes = await fetch(new URL(`/api/sign?key=${encodeURIComponent(key)}`, req.url), {
+    // Reenvía cookies al firmar (middleware protege /api/sign en prod)
+    const cookieHeader = req.headers.get("cookie") ?? "";
+    const signUrl = new URL(`/api/sign?key=${encodeURIComponent(key)}`, req.url);
+    const signRes = await fetch(signUrl, {
       cache: "no-store",
+      headers: { cookie: cookieHeader },
     });
     const signData = await signRes.json().catch(() => null);
-    if (!signRes.ok || !signData?.ok || !signData?.url) {
-      return err(500, "No se pudo firmar la URL.");
-    }
+
+    if (signRes.status === 402) return err(402, "NEED_PAYMENT");
+    if (!signRes.ok || !signData?.ok || !signData?.url) return err(500, "No se pudo firmar la URL.");
 
     const signedUrl: string = signData.url;
     const origin = process.env.NEXT_PUBLIC_SITE_URL || new URL(req.url).origin;
@@ -38,10 +41,7 @@ export async function POST(req: NextRequest) {
       </div>
     `;
 
-    // Sólo Resend (así compila sin nodemailer)
-    if (!process.env.RESEND_API_KEY) {
-      return err(501, "Email no configurado: falta RESEND_API_KEY.");
-    }
+    if (!process.env.RESEND_API_KEY) return err(501, "Email no configurado: falta RESEND_API_KEY.");
 
     const { Resend } = await import("resend");
     const resend = new Resend(process.env.RESEND_API_KEY);
