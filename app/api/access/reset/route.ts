@@ -1,0 +1,32 @@
+﻿import { NextRequest, NextResponse } from "next/server";
+
+export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
+
+function clearCookie(res: NextResponse, name: string, domain?: string, path?: string) {
+  res.cookies.set(name, "", {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: true,
+    path: path ?? "/",
+    ...(domain ? { domain } : {}),
+    maxAge: 0,
+    expires: new Date(0),
+  });
+}
+
+export async function GET(req: NextRequest) {
+  const url = new URL(req.url);
+  const host = url.hostname.replace(/:\d+$/, "");
+  const apex = host.replace(/^www\./, "");
+  const domains = Array.from(new Set([undefined, host, apex, ., www.]));
+  const paths = ["/", "/upload", "/upload-qr", "/api", "/pricing"];
+  const names = ["vx_user", "vx_order", "vx_access"];
+
+  const res = NextResponse.json({ ok: true, cleared: { domains, paths, names } });
+  for (const name of names) for (const d of domains) for (const p of paths) clearCookie(res, name, d, p);
+  res.headers.set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
+  res.headers.set("Pragma", "no-cache");
+  res.headers.set("Expires", "0");
+  return res;
+}
