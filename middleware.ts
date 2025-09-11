@@ -1,14 +1,22 @@
 ﻿// /middleware.ts
 import { NextRequest, NextResponse } from "next/server";
 
+/**
+ * PROTECCIÓN DE RUTAS EN PRODUCCIÓN
+ * - Si NO hay cookies de acceso => redirige a /pricing?need=valid
+ * - /upload-qr ahora también está protegido en producción.
+ * - En desarrollo (npm run dev) NO se aplica la redirección.
+ */
 export const config = {
   matcher: [
-    // páginas estrictas (si las tienes)
+    // páginas protegidas
     "/upload",
+    "/upload/:path*",
+    "/upload-qr",            // <<<<< AÑADIDO
     "/my-codes",
     "/my-codes/:path*",
 
-    // APIs con control de acceso/pago
+    // APIs que requieren pago
     "/api/multipart/:path*",
     "/api/sign",
     "/api/email",
@@ -25,15 +33,27 @@ function noStore(res: NextResponse) {
 }
 
 export function middleware(req: NextRequest) {
-  // En dev, no bloquear nada (pero no-cache)
-  if (process.env.NODE_ENV !== "production") return noStore(NextResponse.next());
+  // En dev no bloqueamos nada
+  if (process.env.NODE_ENV !== "production") {
+    return noStore(NextResponse.next());
+  }
 
-  const p = req.nextUrl.pathname;
+  const path = req.nextUrl.pathname;
+
+  // Señal de acceso: cualquiera de estas cookies
   const hasAccess =
-    Boolean(req.cookies.get("vx_user")?.value) || Boolean(req.cookies.get("vx_order")?.value);
+    Boolean(req.cookies.get("vx_user")?.value) ||
+    Boolean(req.cookies.get("vx_order")?.value) ||
+    Boolean(req.cookies.get("vx_access")?.value);
 
-  // páginas
-  const isProtectedPage = p === "/upload" || p.startsWith("/my-codes");
+  // ¿Es página protegida?
+  const isProtectedPage =
+    path === "/upload" ||
+    path.startsWith("/upload/") ||
+    path === "/my-codes" ||
+    path.startsWith("/my-codes/") ||
+    path === "/upload-qr"; // <<<<< AÑADIDO
+
   if (isProtectedPage && !hasAccess) {
     const url = req.nextUrl.clone();
     url.pathname = "/pricing";
@@ -41,17 +61,21 @@ export function middleware(req: NextRequest) {
     return noStore(NextResponse.redirect(url));
   }
 
-  // APIs
+  // ¿Es API protegida?
   const isProtectedApi =
-    p.startsWith("/api/multipart/") ||
-    p === "/api/sign" ||
-    p === "/api/email" ||
-    p.startsWith("/api/links/");
+    path.startsWith("/api/multipart/") ||
+    path === "/api/sign" ||
+    path === "/api/email" ||
+    path.startsWith("/api/links/");
 
   if (isProtectedApi && !hasAccess) {
     return new NextResponse(JSON.stringify({ ok: false, error: "NEED_PAYMENT" }), {
       status: 402,
-      headers: { "content-type": "application/json", "Cache-Control": "no-store" },
+      headers: {
+        "content-type": "application/json",
+        "Cache-Control": "no-store",
+        "x-mid": "paywall",
+      },
     });
   }
 
