@@ -2,63 +2,44 @@
 import { headers } from "next/headers";
 
 export const dynamic = "force-dynamic";
-
-type Info = {
-  ok: boolean;
-  env?: string | null;
-  commit?: string | null;
-  repo?: string | null;
-  branch?: string | null;
-  builtAt?: string | null;
-  error?: string;
-};
+export const revalidate = 0;
 
 async function baseUrl() {
   const h = await headers();
-  const proto = h.get("x-forwarded-proto") ?? "https";
-  const host =
-    h.get("x-forwarded-host") ?? h.get("host") ?? "localhost:3000";
+  const proto = h.get("x-forwarded-proto") ?? "http";
+  const host = h.get("x-forwarded-host") ?? h.get("host") ?? "localhost:3000";
   return `${proto}://${host}`;
 }
 
 export default async function VersionPage() {
-  const base =
-    process.env.NEXT_PUBLIC_SITE_URL || (await baseUrl());
+  let info: any = null;
+  let tag = "dev";
 
-  let j: Info = { ok: false, error: "no response" };
   try {
-    const res = await fetch(`${base}/api/version`, {
-      cache: "no-store",
-      // Evita cualq. revalidación implícita
-      next: { revalidate: 0 },
-    });
-    j = (await res.json()) as Info;
+    const base = process.env.NEXT_PUBLIC_SITE_URL || (await baseUrl());
+    const r = await fetch(`${base}/api/version?cb=${Date.now()}`, { cache: "no-store" });
+    info = await r.json();
+    if (info?.commit) tag = `commit ${String(info.commit).slice(0, 7)} (${info?.branch || "main"})`;
   } catch {
-    j = { ok: false, error: "no response" };
+    info = { ok: false, error: "no response" };
   }
 
-  const tag = j.commit
-    ? `commit ${j.commit.slice(0, 7)}${j.branch ? ` (${j.branch})` : ""}`
-    : "dev";
-
   return (
-    <main style={{ padding: 24, fontFamily: "system-ui" }}>
-      <h1>Version Check</h1>
-      <p>
-        build: <b>{tag}</b>
-      </p>
-      <p>{j.builtAt ?? ""}</p>
+    <main style={{ padding: 16, fontFamily: "system-ui" }}>
+      <div>Version Check</div>
+      <div style={{ margin: "8px 0" }}>
+        build: <strong>{tag}</strong>
+      </div>
       <pre
         style={{
-          marginTop: 12,
           background: "#0b1020",
-          color: "#e6ecff",
+          color: "white",
           padding: 12,
           borderRadius: 8,
-          overflowX: "auto",
+          overflow: "auto",
         }}
       >
-        {JSON.stringify(j, null, 2)}
+        {JSON.stringify(info, null, 2)}
       </pre>
     </main>
   );

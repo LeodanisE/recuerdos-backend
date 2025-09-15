@@ -1,12 +1,17 @@
 // app/api/links/create/route.ts
-import { NextRequest, NextResponse } from "next/server";
+import type { NextRequest } from "next/server";
+
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
-function j(status: number, body: any) {
-  return NextResponse.json(body, { status, headers: { "Cache-Control": "no-store" } });
-}
-
-/** Stub seguro para build; implementa la creación real más adelante. */
 export async function POST(_req: NextRequest) {
-  return j(501, { ok: false, error: "links/create not implemented (stub)" });
+  // 🔒 El acortador de links está desactivado en producción para evitar dependencias.
+  // Si lo necesitas más adelante, lo reactivamos con una implementación estable.
+  return new Response(
+    JSON.stringify({
+      ok: false,
+      error: "Link shortener desactivado en este proyecto.",
+    }),
+    { status: 501, headers: { "Content-Type": "application/json" } }
+  );
 }

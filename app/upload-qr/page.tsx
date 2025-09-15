@@ -1,368 +1,296 @@
-// app/upload-qr/page.tsx
-"use client";
+﻿// app/upload-qr/page.tsx — REEMPLAZO COMPLETO (abre cualquier formato, incluido MP3)
+'use client';
 
-import * as React from "react";
-import { QRCodeCanvas } from "qrcode.react";
+import * as React from 'react';
+import { QRCodeCanvas } from 'qrcode.react';
 
-type Msg = { text: string; type: "success" | "error" | "" };
+type Msg = { text: string; type: 'ok' | 'err' | '' };
 
-export const dynamic = "force-dynamic";
+function normalizeHex(hex: string) {
+  const h = hex.trim().toLowerCase();
+  if (/^#([0-9a-f]{3})$/i.test(h)) {
+    return '#' + h.slice(1).split('').map((c) => c + c).join('');
+  }
+  return h;
+}
 
 export default function UploadQRPage() {
-  const [msg, setMsg] = React.useState<Msg>({ text: "", type: "" });
-  const [key, setKey] = React.useState<string | null>(null);
-  const [signedUrl, setSignedUrl] = React.useState<string | null>(null);
-  const [shortUrl, setShortUrl] = React.useState<string | null>(null);
+  const [file, setFile] = React.useState<File | null>(null);
+  const [toEmail, setToEmail] = React.useState('');
 
-  // Email UI
-  const [email, setEmail] = React.useState("");
-  const [sending, setSending] = React.useState(false);
-  const [emailMsg, setEmailMsg] = React.useState<{ text: string; type: "ok" | "err" | "" }>({
-    text: "",
-    type: "",
-  });
+  const [link, setLink] = React.useState<string | null>(null);
+  const [busy, setBusy] = React.useState(false);
 
-  // ✔️ Tipo correcto para la ref del canvas del QR
-  const qrRef = React.useRef<HTMLCanvasElement | null>(null);
+  const [msg, setMsg] = React.useState<Msg>({ text: '', type: '' });
+  const [mailMsg, setMailMsg] = React.useState<Msg>({ text: '', type: '' });
 
-  // Tag de compilación (opcional)
-  const [buildTag, setBuildTag] = React.useState<string>("");
+  type BgOpt = 'transparent' | 'white' | 'black';
+  const [bgOpt, setBgOpt] = React.useState<BgOpt>('white');
+  const [qrColor, setQrColor] = React.useState<string>('#000000');
+  const [qrWarn, setQrWarn] = React.useState<string>('');
 
-  React.useEffect(() => {
-    (async () => {
-      try {
-        const r = await fetch("/api/version", { cache: "no-store" });
-        const j = await r.json().catch(() => null);
-        if (j?.commit) setBuildTag(`commit ${String(j.commit).slice(0, 7)}${j?.branch ? ` (${j.branch})` : ""}`);
-      } catch {
-        setBuildTag("");
+  const bgColor =
+    bgOpt === 'transparent' ? 'rgba(255,255,255,0)' : bgOpt === 'white' ? '#ffffff' : '#000000';
+
+  function handleBgChange(next: BgOpt) {
+    setBgOpt(next);
+    if (next !== 'transparent') {
+      const bgHex = next === 'white' ? '#ffffff' : '#000000';
+      if (normalizeHex(qrColor) === bgHex) {
+        setQrColor(next === 'white' ? '#000000' : '#ffffff');
       }
-    })();
-  }, []);
-
-  function originForLinks() {
-    const env = process.env.NEXT_PUBLIC_SITE_URL;
-    if (env && env.trim().length > 0) return env.replace(/\/+$/, "");
-    if (typeof window !== "undefined") return window.location.origin;
-    return "http://localhost:3000";
+    }
+    setQrWarn('');
   }
 
-  async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
+  function handleQrColorChange(next: string) {
+    if (bgOpt !== 'transparent') {
+      const bgHex = bgOpt === 'white' ? '#ffffff' : '#000000';
+      if (normalizeHex(next) === bgHex) {
+        setQrWarn(
+          `El color del QR no puede ser igual al fondo ${bgOpt === 'white' ? 'blanco' : 'negro'}.`,
+        );
+        return;
+      }
+    }
+    setQrWarn('');
+    setQrColor(next);
+  }
+
+  async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
-    setMsg({ text: "Subiendo…", type: "" });
-    setKey(null);
-    setSignedUrl(null);
-    setShortUrl(null);
-    setEmailMsg({ text: "", type: "" });
+    setMsg({ text: '', type: '' });
+    setMailMsg({ text: '', type: '' });
+    setLink(null);
 
-    const form = e.currentTarget;
-    const input = form.elements.namedItem("file") as HTMLInputElement | null;
-    const tos = (form.elements.namedItem("tos") as HTMLInputElement | null)?.checked;
-    const file = input?.files?.[0];
+    if (!file) return setMsg({ text: 'Selecciona un archivo.', type: 'err' });
+    if (!toEmail.trim()) return setMsg({ text: 'Escribe el correo del usuario.', type: 'err' });
 
-    if (!file) {
-      setMsg({ text: "Selecciona un archivo.", type: "error" });
-      return;
-    }
-    if (!tos) {
-      setMsg({ text: "Debes aceptar los términos de uso.", type: "error" });
-      return;
-    }
+    const body = new FormData();
+    body.append('file', file);
 
+    setBusy(true);
     try {
-      // 1) INIT
-      const q = new URLSearchParams({
-        filename: file.name,
-        contentType: file.type || "application/octet-stream",
-        parts: "1",
-      }).toString();
+      const up = await fetch('/api/upload', { method: 'POST', body });
+      const upData = await up.json();
+      if (!up.ok || !upData?.ok)
+        throw new Error(upData?.detail || upData?.error || 'Error subiendo archivo');
 
-      const initRes = await fetch(`/api/multipart/init?${q}`, { cache: "no-store" });
-
-      // Si el backend devuelve 402, mostramos paywall claro
-      if (initRes.status === 402) {
-        setMsg({ text: "NEED_PAYMENT", type: "error" });
-        return;
-      }
-
-      const initData = await initRes.json().catch(() => null);
-      if (!initRes.ok || !initData?.ok) {
-        setMsg({
-          text:
-            initData?.error ||
-            initData?.detail ||
-            `No se pudo iniciar la subida (INIT ${initRes.status}).`,
-          type: "error",
-        });
-        return;
-      }
-
-      const objectKey: string = initData.key;
-      const uploadId: string = initData.uploadId;
-      const putUrl: string = initData.urls?.[0]?.url || initData.url;
-
-      if (!putUrl || !objectKey || !uploadId) {
-        setMsg({ text: "INIT incompleto. Falta URL o claves.", type: "error" });
-        return;
-      }
-
-      // 2) PUT (proxy)
-      const putRes = await fetch(
-        `/api/multipart/put?url=${encodeURIComponent(putUrl)}&size=${file.size}&type=${encodeURIComponent(
-          file.type || "application/octet-stream",
-        )}`,
-        { method: "POST", body: file, cache: "no-store" },
+      const shortUrl = upData.url as string;
+      setLink(shortUrl);
+      setMsg(
+        upData.existed
+          ? { text: 'Este archivo ya tenía QR. Reutilizando el mismo enlace (permanente).', type: 'ok' }
+          : { text: `Archivo subido: ${upData.key}`, type: 'ok' },
       );
 
-      const putJson = await putRes.json().catch(() => null);
-      if (!putRes.ok || !putJson?.ok) {
-        const snippet =
-          putJson?.bodySnippet ? ` — ${String(putJson.bodySnippet).slice(0, 160)}…` : "";
-        setMsg({
-          text: `Fallo en PUT (${putRes.status}). ${putJson?.error || ""}${snippet}`,
-          type: "error",
-        });
-        return;
-      }
-
-      const ETag: string =
-        putJson?.etag ||
-        putRes.headers.get("etag") ||
-        putRes.headers.get("ETag") ||
-        "";
-
-      if (!ETag) {
-        setMsg({
-          text: "No se recibió ETag del PUT (requerido para completar).",
-          type: "error",
-        });
-        return;
-      }
-
-      // 3) COMPLETE
-      const completeRes = await fetch(`/api/multipart/complete`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          uploadId,
-          key: objectKey,
-          parts: [{ ETag, PartNumber: 1 }],
-        }),
+      const res = await fetch('/api/email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: upData.key, to: toEmail.trim() }),
       });
-
-      const completeData = await completeRes.json().catch(() => null);
-      if (!completeRes.ok || !completeData?.ok) {
-        setMsg({
-          text:
-            completeData?.error ||
-            completeData?.detail ||
-            `Fallo al completar la subida (COMPLETE ${completeRes.status}).`,
-          type: "error",
-        });
-        return;
-      }
-
-      // 4) Firmar y armar enlaces
-      const signRes = await fetch(`/api/sign?key=${encodeURIComponent(objectKey)}`, {
-        cache: "no-store",
-      });
-      const signData = await signRes.json().catch(() => null);
-      if (!signRes.ok || !signData?.ok || !signData?.url) {
-        setMsg({
-          text: "Archivo subido, pero no se pudo firmar URL.",
-          type: "error",
-        });
-        setKey(objectKey);
-        const origin = originForLinks();
-        setShortUrl(`${origin}/l/${encodeURIComponent(objectKey)}`);
-        return;
-      }
-
-      setKey(objectKey);
-      setSignedUrl(signData.url);
-
-      const origin = originForLinks();
-      setShortUrl(`${origin}/l/${encodeURIComponent(objectKey)}`);
-
-      setMsg({ text: "¡Archivo subido correctamente!", type: "success" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data?.ok) throw new Error(data?.error || 'No se pudo enviar el correo.');
+      setMailMsg({ text: 'Correo enviado ✅', type: 'ok' });
     } catch (err: any) {
-      setMsg({ text: err?.message || "Error inesperado durante la subida.", type: "error" });
+      setMailMsg({ text: err.message || 'Error enviando correo', type: 'err' });
+    } finally {
+      setBusy(false);
     }
   }
 
-  function downloadQR() {
-    const canvas = qrRef.current;
-    if (!canvas) return;
-    const png = canvas.toDataURL("image/png");
-    const a = document.createElement("a");
-    a.href = png;
-    a.download = "qr.png";
+  function copyLink() {
+    if (!link) return;
+    navigator.clipboard?.writeText(link).catch(() => {});
+  }
+
+  function downloadPng() {
+    const el = document.getElementById('qr-png') as HTMLCanvasElement | null;
+    if (!el) return;
+    const a = document.createElement('a');
+    a.href = el.toDataURL('image/png');
+    a.download = 'qr.png';
     a.click();
   }
 
-  async function sendEmail() {
-    try {
-      if (!key) {
-        setEmailMsg({ text: "No hay archivo subido todavía.", type: "err" });
-        return;
-      }
-      if (!email) {
-        setEmailMsg({ text: "Ingresa un correo válido.", type: "err" });
-        return;
-      }
-      setSending(true);
-      setEmailMsg({ text: "", type: "" });
-
-      const r = await fetch("/api/email", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ to: email, key }),
-      });
-      const j = await r.json().catch(() => ({} as any));
-      if (!r.ok || !j?.ok) {
-        setEmailMsg({
-          text: j?.error || "No se pudo enviar el correo.",
-          type: "err",
-        });
-      } else {
-        setEmailMsg({ text: "Correo enviado ✅", type: "ok" });
-      }
-    } catch (e: any) {
-      setEmailMsg({ text: e?.message || "Error inesperado.", type: "err" });
-    } finally {
-      setSending(false);
-    }
+  function shareWhatsApp() {
+    if (!link) return;
+    const text = encodeURIComponent(link);
+    window.open(`https://wa.me/?text=${text}`, '_blank', 'noopener,noreferrer');
   }
 
-  const qrValue = shortUrl || signedUrl || "";
-
   return (
-    <div style={{ padding: 20, fontFamily: "system-ui" }}>
-      <h1>Sube un archivo y genera tu QR</h1>
-      {buildTag && (
-        <div style={{ fontSize: 12, color: "#6b7280", marginTop: -6, marginBottom: 6 }}>
-          {buildTag}
+    <main className="min-h-[100svh] px-4 pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] 
+                     bg-gradient-to-b from-slate-50 via-slate-50 to-slate-100">
+      <div className="max-w-xl mx-auto mb-3 flex items-center gap-3">
+        <div className="h-8 w-8 rounded-xl bg-gradient-to-tr from-sky-400 to-indigo-500 text-white grid place-items-center shadow-md">
+          <span className="text-sm font-bold">QR</span>
         </div>
-      )}
+        <span className="text-slate-800 font-semibold">SaveInQR</span>
+      </div>
 
-      <form
-        onSubmit={onSubmit}
-        style={{ display: "flex", flexDirection: "column", gap: 12, maxWidth: 480 }}
-      >
-        <input type="file" name="file" />
-        <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <input type="checkbox" name="tos" required />
-          <span style={{ fontSize: 14 }}>
-            Acepto no subir contenido sexual, violento, ilegal o con copyright sin permiso.
-          </span>
-        </label>
-        <button type="submit">Subir</button>
-      </form>
+      <div className="max-w-xl mx-auto rounded-2xl bg-white/90 shadow-xl ring-1 ring-slate-200/70 p-5 sm:p-6 backdrop-blur">
+        <h1 className="text-xl sm:text-2xl font-semibold text-slate-900 leading-snug mb-3">
+          Subir archivo → QR permanente → Enviar por correo
+        </h1>
 
-      {msg.text && (
-        <p
-          style={{
-            marginTop: 12,
-            color: msg.type === "error" ? "red" : "green",
-            fontWeight: "bold",
-          }}
-        >
-          {msg.text}
-        </p>
-      )}
+        <form onSubmit={onSubmit} className="space-y-5">
+          <div className="space-y-2">
+            <label className="block text-sm text-slate-700" htmlFor="email">
+              Correo del usuario
+            </label>
+            <input
+              id="email"
+              type="email"
+              required
+              value={toEmail}
+              onChange={(e) => setToEmail(e.target.value)}
+              placeholder="usuario@correo.com"
+              className="w-full rounded-xl border border-slate-200 bg-white p-3 text-slate-900 
+                         placeholder:text-slate-400 shadow-sm
+                         focus:outline-none focus:ring-4 focus:ring-sky-200 focus:border-sky-400"
+              inputMode="email"
+              autoComplete="email"
+            />
+          </div>
 
-      {(signedUrl || shortUrl || key) && (
-        <div style={{ marginTop: 20 }}>
-          {signedUrl && (
-            <p style={{ marginBottom: 8 }}>
-              Enlace directo (temporal):{" "}
-              <a href={signedUrl} target="_blank" rel="noreferrer">
-                {signedUrl.length > 80 ? signedUrl.slice(0, 80) + "…" : signedUrl}
-              </a>
-            </p>
-          )}
+          {/* === ACEPTA CUALQUIER FORMATO === */}
+          <div className="space-y-2">
+            <label className="block text-sm text-slate-700" htmlFor="file">
+              Archivo
+            </label>
+            <input
+              id="file"
+              type="file"
+              accept="*/*"           // ← permite mp3, wav, zip, docx, etc.
+              onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+              className="block w-full rounded-xl border border-slate-200 shadow-sm
+                         file:mr-4 file:rounded-lg file:border-0 file:bg-slate-900 file:px-4 file:py-2.5
+                         file:text-sm file:font-medium file:text-white hover:file:bg-slate-80
+                         text-slate-700 p-2.5"
+            />
+            <p className="text-xs text-slate-500">Formatos: cualquiera (mp3, mp4, pdf, imágenes, zip…).</p>
+          </div>
 
-          {shortUrl && (
-            <p style={{ marginBottom: 12 }}>
-              Enlace corto:{" "}
-              <a href={shortUrl} target="_blank" rel="noreferrer">
-                {shortUrl}
-              </a>
-            </p>
-          )}
+          <div className="rounded-2xl border border-slate-200 bg-slate-50/60 p-4">
+            <div className="text-sm font-medium text-slate-700 mb-3">Apariencia del QR</div>
 
-          {!!qrValue && (
-            <>
-              <div
-                style={{
-                  display: "inline-block",
-                  padding: 12,
-                  border: "1px solid #ddd",
-                  borderRadius: 8,
-                }}
-              >
-                {/* ref correcto al canvas */}
-                <QRCodeCanvas ref={qrRef} id="qrCanvas" value={qrValue} size={220} includeMargin />
+            <div className="mb-3">
+              <div className="text-xs text-slate-600 mb-1">Fondo</div>
+              <div className="inline-flex rounded-xl border border-slate-200 bg-white p-1 shadow-sm">
+                {(['transparent', 'white', 'black'] as const).map((opt) => (
+                  <button
+                    key={opt}
+                    type="button"
+                    aria-pressed={bgOpt === opt}
+                    onClick={() => handleBgChange(opt)}
+                    className={`px-3 py-1.5 text-sm rounded-lg transition
+                                ${bgOpt === opt
+                      ? 'bg-gradient-to-tr from-sky-400 to-indigo-500 text-white shadow'
+                      : 'text-slate-700 hover:bg-slate-100'}`}
+                  >
+                    {opt === 'transparent' ? 'Transparente' : opt === 'white' ? 'Blanco' : 'Negro'}
+                  </button>
+                ))}
               </div>
-              <div style={{ marginTop: 10 }}>
-                <button onClick={downloadQR}>Descargar QR</button>
-              </div>
-            </>
-          )}
+            </div>
 
-          {key && <p style={{ marginTop: 8, color: "#666" }}>Key: {key}</p>}
-        </div>
-      )}
+            <div className="flex items-center gap-3">
+              <div className="text-xs text-slate-600">Color del QR</div>
+              <input
+                aria-label="Color del QR"
+                type="color"
+                value={qrColor}
+                onChange={(e) => handleQrColorChange(e.target.value)}
+                className="h-9 w-12 cursor-pointer rounded-lg shadow-inner border border-slate-300"
+              />
+              <span className="text-xs text-slate-500">{qrColor.toUpperCase()}</span>
+              {qrWarn ? <span className="text-xs text-red-600 ml-2">{qrWarn}</span> : null}
+            </div>
+          </div>
 
-      <div
-        style={{
-          marginTop: 16,
-          padding: 12,
-          border: "1px solid #e5e7eb",
-          borderRadius: 8,
-          maxWidth: 480,
-        }}
-      >
-        <div style={{ fontWeight: 600, marginBottom: 8 }}>Enviar el QR y enlace a tu correo</div>
-
-        <div style={{ display: "flex", gap: 8 }}>
-          <input
-            type="email"
-            placeholder="tucorreo@ejemplo.com"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            style={{ flex: 1, padding: 8, border: "1px solid #ddd", borderRadius: 6 }}
-            required
-          />
           <button
-            type="button"
-            onClick={sendEmail}
-            disabled={sending || !key}
-            style={{ padding: "8px 12px", borderRadius: 6, border: "1px solid #111" }}
-            title={!key ? "Sube un archivo para habilitar el envío" : ""}
+            type="submit"
+            disabled={busy}
+            className="h-12 w-full rounded-xl bg-slate-900 text-white font-semibold shadow-lg
+                       hover:bg-slate-800 active:translate-y-px
+                       focus:outline-none focus:ring-4 focus:ring-sky-200
+                       disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {sending ? "Enviando…" : "Enviar"}
+            {busy ? 'Procesando…' : 'Subir y enviar QR'}
           </button>
-        </div>
+        </form>
 
-        {!key && (
-          <p style={{ marginTop: 8, color: "#6b7280" }}>
-            Sube un archivo para habilitar el envío por email.
-          </p>
+        {(msg.text || mailMsg.text) && (
+          <div className="space-y-2 mt-4">
+            {msg.text && (
+              <p
+                className={`p-2.5 rounded-lg text-sm ${
+                  msg.type === 'ok'
+                    ? 'text-emerald-700 bg-emerald-50 border border-emerald-200'
+                    : 'text-red-700 bg-red-50 border border-red-200'
+                }`}
+              >
+                {msg.text}
+              </p>
+            )}
+            {mailMsg.text && (
+              <p
+                className={`p-2.5 rounded-lg text-sm ${
+                  mailMsg.type === 'ok'
+                    ? 'text-emerald-700 bg-emerald-50 border border-emerald-200'
+                    : 'text-red-700 bg-red-50 border border-red-200'
+                }`}
+              >
+                {mailMsg.text}
+              </p>
+            )}
+          </div>
         )}
 
-        {emailMsg.text && (
-          <p
-            style={{
-              marginTop: 8,
-              color: emailMsg.type === "err" ? "#b91c1c" : "#166534",
-              fontWeight: 600,
-            }}
-          >
-            {emailMsg.text}
-          </p>
+        {link && (
+          <div className="space-y-4 mt-5">
+            <div>
+              <p className="text-sm text-slate-600">Enlace permanente:</p>
+              <a
+                href={link}
+                target="_blank"
+                rel="noreferrer"
+                className="break-all text-sky-700 underline underline-offset-4"
+              >
+                {link}
+              </a>
+            </div>
+
+            <div className="flex flex-wrap gap-3">
+              <button onClick={copyLink} className="px-3 py-2 rounded-lg border border-slate-200 shadow-sm hover:bg-slate-50">
+                Copiar enlace
+              </button>
+              <button onClick={downloadPng} className="px-3 py-2 rounded-lg border border-slate-200 shadow-sm hover:bg-slate-50">
+                Descargar QR (PNG)
+              </button>
+              <button onClick={shareWhatsApp} className="px-3 py-2 rounded-lg border border-slate-200 shadow-sm hover:bg-slate-50">
+                Compartir por WhatsApp
+              </button>
+            </div>
+
+            <div
+              className="inline-block rounded-2xl p-3 ring-1 ring-slate-200 shadow-sm"
+              style={{ background: bgOpt === 'transparent' ? 'transparent' : bgColor }}
+            >
+              <QRCodeCanvas
+                id="qr-png"
+                value={link}
+                size={220}
+                includeMargin
+                level="M"
+                bgColor={bgColor}
+                fgColor={qrColor}
+              />
+            </div>
+          </div>
         )}
       </div>
-    </div>
+    </main>
   );
 }

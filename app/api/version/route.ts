@@ -1,20 +1,15 @@
-﻿import { NextResponse } from "next/server";
+﻿// app/api/version/route.ts
+import { NextResponse } from "next/server";
+
 export const dynamic = "force-dynamic";
-export const runtime = "nodejs";
+
 export async function GET() {
-  const env =
-    process.env.VERCEL_ENV === "production"
-      ? "producción"
-      : process.env.VERCEL_ENV || process.env.NODE_ENV || "dev";
+  const branch = process.env.VERCEL_GIT_COMMIT_REF || process.env.GIT_BRANCH || "unknown";
+  const commit = process.env.VERCEL_GIT_COMMIT_SHA || process.env.GIT_COMMIT || "unknown";
+  const builtAt = new Date().toISOString();
+
   return NextResponse.json(
-    {
-      ok: true,
-      env,
-      commit: process.env.VERCEL_GIT_COMMIT_SHA || process.env.COMMIT_SHA || "local",
-      repo: process.env.VERCEL_GIT_REPO_SLUG || "recuerdos-backend",
-      branch: process.env.VERCEL_GIT_COMMIT_REF || "main",
-      builtAt: new Date().toISOString(),
-    },
+    { ok: true, branch, commit, builtAt },
     { headers: { "Cache-Control": "no-store" } },
   );
 }

@@ -1,16 +1,34 @@
-// app/l/[code]/route.ts
-import { NextResponse } from "next/server";
-export const runtime = "nodejs";
+// app/l/[code]/route.ts  ⬅️ REEMPLAZO COMPLETO
+import { NextRequest, NextResponse } from "next/server";
 
-/**
- * Stub temporal para compilar en Next 15.
- * Ajusta la lógica real más adelante si necesitas este endpoint.
- */
-export async function GET(_req: Request, ctx: any) {
-  const code = ctx?.params?.code as string | undefined;
-  if (!code) {
-    return NextResponse.json({ ok: false, error: "Missing code" }, { status: 400 });
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+const UP_URL = process.env.UPSTASH_REDIS_REST_URL!;
+const UP_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN!;
+
+async function redisGet(key: string) {
+  const res = await fetch(`${UP_URL}/get/${encodeURIComponent(key)}`, {
+    headers: { Authorization: `Bearer ${UP_TOKEN}` },
+    cache: "no-store",
+  });
+  if (!res.ok) return null;
+  const data = await res.json().catch(() => null);
+  return data?.result ?? null;
+}
+
+export async function GET(
+  req: NextRequest,
+  ctx: { params: Promise<{ code: string }> }
+) {
+  const { code } = await ctx.params;
+
+  const target = await redisGet(`map:${code}`);
+  if (!target) {
+    return NextResponse.json({ ok: false, error: "No se configuró ningún mapeo de enlaces." }, { status: 404 });
   }
-  // TODO: implementar resolución real del short link
-  return NextResponse.json({ ok: false, error: "Not implemented for /l" }, { status: 501 });
+
+  const origin = new URL(req.url).origin;
+  const absolute = /^https?:\/\//i.test(target) ? target : new URL(target, origin).toString();
+  return NextResponse.redirect(absolute, 302);
 }

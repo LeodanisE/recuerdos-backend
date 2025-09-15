@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">SaveInQR</string>
+    <string name="title_activity_main">SaveInQR</string>
+    <string name="package_name">com.saveinqr.app</string>
+    <string name="custom_url_scheme">com.saveinqr.app</string>
+</resources>
