@@ -1,34 +1,44 @@
-// lib/paypal.ts (o lib/b2.ts)
-export async function getPaypalToken(): Promise<string> {
-  const cid  = process.env.PAYPAL_CLIENT_ID?.trim();
-  const csec = process.env.PAYPAL_CLIENT_SECRET?.trim();
-  const base = (process.env.PAYPAL_BASE || process.env.PAYPAL_API_BASE || "").trim();
+// lib/b2.ts
+import { S3Client } from '@aws-sdk/client-s3';
 
-  if (!cid || !csec || !base) {
-    throw new Error("Missing PAYPAL envs");
-  }
+function need(name: string, def?: string) {
+  const v = process.env[name] ?? def;
+  if (!v) throw new Error(`Falta env ${name}`);
+  return v;
+}
 
-  const basic = Buffer.from(`${cid}:${csec}`).toString("base64");
+export function bucketIsPublic() {
+  return String(process.env.BUCKET_PUBLIC || '').toLowerCase() === 'true';
+}
 
-  const params = new URLSearchParams();
-  params.set("grant_type", "client_credentials");
+export function b2Config() {
+  const bucket = process.env.B2_BUCKET_NAME || process.env.B2_BUCKET;
+  if (!bucket) throw new Error('Falta env B2_BUCKET_NAME o B2_BUCKET');
 
-  const res = await fetch(`${base.replace(/\/$/, "")}/v1/oauth2/token`, {
-    method: "POST",
-    headers: {
-      Authorization: `Basic ${basic}`,
-      "Content-Type": "application/x-www-form-urlencoded",
-      Accept: "application/json",
-      "Accept-Language": "en_US",
-    },
-    body: params.toString(),
+  const region = need('B2_REGION');
+  const endpoint = need('B2_S3_ENDPOINT');
+  const accessKeyId = need('B2_KEY_ID');
+  const secretAccessKey = need('B2_APPLICATION_KEY');
+
+  // Si el bucket es público, armamos base pública tipo:
+  // B2_DOWNLOAD_URL/file/<bucket>
+  const downloadBase = process.env.B2_DOWNLOAD_URL
+    ? `${process.env.B2_DOWNLOAD_URL.replace(/\/+$/,'')}/file/${bucket}`
+    : '';
+
+  return { bucket, region, endpoint, accessKeyId, secretAccessKey, downloadBase };
+}
+
+export function b2Client() {
+  const { region, endpoint, accessKeyId, secretAccessKey } = b2Config();
+  return new S3Client({
+    region,
+    endpoint,
+    forcePathStyle: true, // Backblaze va mejor así
+    credentials: { accessKeyId, secretAccessKey },
   });
+}
 
-  if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(`PayPal token error ${res.status}: ${body}`);
-  }
-
-  const data = await res.json() as { access_token: string };
-  return data.access_token;
+export function safeName(name: string) {
+  return (name || 'file.bin').replace(/[^a-z0-9._-]+/gi, '_');
 }
